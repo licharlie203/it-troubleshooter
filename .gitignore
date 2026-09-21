@@ -1,0 +1,9 @@
+config.py
+__pycache__/
+*.pyc
+venv/
+.venv/
+it_troubleshooter.db
+chroma_db/
+.DS_Store
+Thumbs.db
