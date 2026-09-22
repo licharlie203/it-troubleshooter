@@ -21,6 +21,7 @@ import streamlit as st
 import db
 import agent
 import vector_search
+import suggest
 
 
 # ==================== 读取 API Key（和 ai-doc-qa 一样的逻辑） ====================
@@ -46,6 +47,22 @@ def get_model():
         return config.MODEL
     except Exception:
         return "qwen-plus"
+
+
+def render_trace(trace, idx=0):
+    """把 Agent 的工具调用轨迹渲染成一个折叠面板（多轮时每轮一个，用 idx 区分）。"""
+    if not trace:
+        return
+    with st.expander(f"🧠 Agent 排查过程（第 {idx} 轮）", expanded=False):
+        for t in trace:
+            if t["type"] == "call":
+                args_str = ", ".join(f"{k}={v}" for k, v in t["args"].items()) or "无参数"
+                st.markdown(f"**第 {t['step']} 步 · 调用工具：** `{t['name']}`（{args_str}）")
+            elif t["type"] == "result":
+                preview = str(t["result"])[:300] + ("…" if len(str(t["result"])) > 300 else "")
+                st.caption("↳ 工具返回：" + preview)
+            else:
+                st.markdown(f"**第 {t['step']} 步 · 生成最终排查建议**")
 
 
 # ==================== 页面设置 ====================
@@ -78,72 +95,175 @@ if "index_built" not in st.session_state:
 page = st.sidebar.radio("功能", ["🔍 故障排查", "➕ 录入故障", "📚 故障库"])
 
 
-# ==================== 页面 1：故障排查 ====================
+# ==================== 页面 1：故障排查（多轮对话） ====================
 if page == "🔍 故障排查":
-    st.subheader("🔍 描述故障，让 AI 帮你排查")
-    st.caption("它会自动检索知识库里相似的历史案例，再给出分步排查清单（先易后难，每步注明依据）")
+    # chat_history 存整个对话：[{"role":"user"/"assistant", "content":..., "trace":[...]}]
+    # ⚠️ 它只是一个普通 list，不是 widget 的 key，所以可以随便改，不受 Streamlit 那条铁律限制
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
 
-    question = st.text_area(
-        "故障现象",
-        placeholder="例如：打印机突然打不出来了，显示脱机，任务卡在队列里不动",
-        height=100,
-    )
+    head_l, head_r = st.columns([4, 1.2])
+    with head_l:
+        st.subheader("🔍 描述故障，让 AI 帮你排查")
+        st.caption("信息不够时它会**追问**；你补充后它接着往下排查。对话会留在页面上，随时能继续补充。")
+    with head_r:
+        if st.session_state["chat_history"]:
+            if st.button("🗑️ 清空对话", use_container_width=True):
+                st.session_state["chat_history"] = []
+                st.rerun()
 
-    if st.button("开始排查", type="primary", disabled=not question.strip()):
-        with st.spinner("正在检索相似案例并生成排查方案..."):
-            try:
-                answer, trace = agent.diagnose(question, api_key, model=get_model(), embed_model=embed_model)
-            except Exception as e:
-                answer = f"❌ 出错了：{e}"
-                trace = []
+    # ---- 渲染历史对话（每次 rerun 重放一遍，所以刷新页面也不会丢） ----
+    for i, m in enumerate(st.session_state["chat_history"]):
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+            render_trace(m.get("trace"), idx=i // 2 + 1)
 
-        st.markdown("### 💡 排查建议")
-        st.markdown(answer)
+    # ---- 输入框：st.chat_input 固定在页面底部，回车即发送 ----
+    prompt = st.chat_input("描述故障现象，或回答 AI 的追问…")
+    if prompt:
+        # ❶ 先取出历史（只保留 user/assistant 纯文本，不能带 tool_calls，跨轮会报错）
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state["chat_history"]
+        ]
 
-        if trace:
-            with st.expander("🧠 Agent 排查过程（调用了哪些工具）", expanded=False):
-                for t in trace:
-                    if t["type"] == "call":
-                        args_str = ", ".join(f"{k}={v}" for k, v in t["args"].items()) or "无参数"
-                        st.markdown(f"**第 {t['step']} 步 · 调用工具：** `{t['name']}`（{args_str}）")
-                    elif t["type"] == "result":
-                        preview = str(t["result"])[:300] + ("…" if len(str(t["result"])) > 300 else "")
-                        st.caption("↳ 工具返回：" + preview)
-                    else:
-                        st.markdown(f"**第 {t['step']} 步 · 生成最终排查建议**")
+        # ❷ 显示用户这一句
+        st.session_state["chat_history"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # ❸ 调 Agent（把历史一起传进去，模型这才有「记忆」）
+        with st.chat_message("assistant"):
+            with st.spinner("正在检索相似案例并生成排查方案..."):
+                try:
+                    answer, trace = agent.diagnose(
+                        prompt, api_key, model=get_model(),
+                        embed_model=embed_model, history=history,
+                    )
+                except Exception as e:
+                    answer = f"❌ 出错了：{e}"
+                    trace = []
+            st.markdown(answer)
+            render_trace(trace, idx=len(st.session_state["chat_history"]) // 2 + 1)
+
+        st.session_state["chat_history"].append(
+            {"role": "assistant", "content": answer, "trace": trace}
+        )
 
     st.divider()
-    st.caption("提示：知识库案例越丰富，排查建议越准。用右侧「录入故障」把解决过的新故障存进来。")
+    st.caption("提示：知识库案例越丰富，排查建议越准。用左侧「录入故障」把解决过的新故障存进来。")
 
 
 # ==================== 页面 2：录入故障 ====================
 elif page == "➕ 录入故障":
     st.subheader("➕ 录入一条已解决的故障")
-    st.caption("录入后它会立即进入知识库，下次排查同类故障时 AI 就能参考")
+    st.caption("填完标题和症状，点「✨ 自动补全」让 AI 帮你填分类和标签，省得手打")
 
-    with st.form("add_case_form", clear_on_submit=True):
-        title = st.text_input("故障标题 *", placeholder="如：打印机脱机无法打印")
-        category = st.text_input("分类", placeholder="如：打印 / 网络 / 系统 / 硬件 / 账号权限 / 办公软件")
-        symptom = st.text_area("症状（用户看到什么现象）*", placeholder="如：打印机显示脱机，任务卡住")
-        cause = st.text_area("根本原因", placeholder="如：Print Spooler 服务停止")
-        steps = st.text_area("解决步骤（每行一条）*", placeholder="1. 重启 Print Spooler 服务\n2. 取消卡住的打印任务\n3. 重装驱动")
-        tags = st.text_input("标签（逗号分隔，方便检索）", placeholder="如：打印机,脱机,spooler")
+    # 表单字段统一用 session_state 管理（这样代码里能改它们的值）
+    FIELDS = ["f_title", "f_category", "f_symptom", "f_cause", "f_steps", "f_tags"]
+    for k in FIELDS:
+        if k not in st.session_state:
+            st.session_state[k] = ""
 
-        submitted = st.form_submit_button("保存到知识库", type="primary")
-
-    if submitted:
-        if not title.strip() or not symptom.strip() or not steps.strip():
-            st.error("标题、症状、解决步骤是必填项。")
+    # ============================================================
+    # 阶段一：处理上一次点击留下的任务
+    # ⚠️ 必须放在创建输入框【之前】！
+    #    Streamlit 规定：widget 一旦创建，就不能再改同名 session_state，
+    #    否则报 StreamlitWidgetAlreadyInstantiatedError。
+    #    所以「改值」的动作要赶在这次运行的渲染阶段之前做完。
+    #    这就是为什么按钮里只放一个「标记」，真正的活儿在这里干。
+    # ============================================================
+    if st.session_state.get("_do_autofill"):
+        st.session_state["_do_autofill"] = False   # 先清标记，防止重复执行
+        title_v = st.session_state.get("f_title", "")
+        symptom_v = st.session_state.get("f_symptom", "")
+        cause_v = st.session_state.get("f_cause", "")
+        if not title_v.strip() and not symptom_v.strip():
+            st.session_state["autofill_msg"] = "⚠️ 先填「标题」或「症状」，AI 才知道归到哪类。"
         else:
-            cid = db.add_case(title.strip(), category.strip(), symptom.strip(),
-                              cause.strip(), steps.strip(), tags.strip())
-            # 同步更新向量索引，让新案例立即参与语义检索
-            try:
-                case = db.get_case(cid)
-                vector_search.upsert_case(case, api_key, model=embed_model)
-            except Exception:
-                pass
-            st.success(f"✅ 已录入「{title}」。")
+            with st.spinner("AI 正在判断分类和生成标签..."):
+                res = suggest.suggest_category_tags(
+                    title_v, symptom_v, cause_v, api_key, model=get_model(),
+                    existing_categories=db.all_categories(),
+                )
+            if res.get("ok"):
+                # 此刻输入框还没创建，改 session_state 是合法的
+                st.session_state["f_category"] = res["category"]
+                st.session_state["f_tags"] = res["tags"]
+                st.session_state["autofill_msg"] = (
+                    f"✅ 已补全：分类「{res['category']}」｜标签「{res['tags']}」\n\n"
+                    f"归类理由：{res['reason']}"
+                )
+            else:
+                st.session_state["autofill_msg"] = (
+                    f"⚠️ 自动补全失败，请手动填写。（{res.get('error', '未知原因')}）"
+                )
+
+    if st.session_state.get("_do_clear"):
+        st.session_state["_do_clear"] = False
+        for k in FIELDS:
+            st.session_state[k] = ""
+
+    # ============================================================
+    # 阶段二：渲染表单（这里创建的 widget，之后就不能再改同名 key 了）
+    # ============================================================
+    st.text_input("故障标题 *", placeholder="如：打印机脱机无法打印", key="f_title")
+    st.text_area("症状（用户看到什么现象）*",
+                 placeholder="如：打印机显示脱机，任务卡住", key="f_symptom")
+    st.text_area("根本原因", placeholder="如：Print Spooler 服务停止", key="f_cause")
+    st.text_area("解决步骤（每行一条）*",
+                 placeholder="1. 重启 Print Spooler 服务\n2. 取消卡住的打印任务\n3. 重装驱动",
+                 key="f_steps")
+
+    st.markdown("##### 分类与标签（可让 AI 补全）")
+    st.text_input("分类", placeholder="如：打印 / 网络 / 系统 / 硬件 / 账号权限 / 办公软件",
+                  key="f_category")
+    st.text_input("标签（逗号分隔，方便检索）", placeholder="如：打印机,脱机,spooler", key="f_tags")
+
+    col_auto, col_save, _ = st.columns([1.2, 1.2, 2.6])
+
+    with col_auto:
+        if st.button("✨ 自动补全", use_container_width=True):
+            # 按钮里只打标记，然后 rerun；真正的活儿在下一轮渲染前干
+            st.session_state["_do_autofill"] = True
+            st.rerun()
+    with col_save:
+        if st.button("保存到知识库", type="primary", use_container_width=True):
+            title_v = st.session_state.get("f_title", "").strip()
+            symptom_v = st.session_state.get("f_symptom", "").strip()
+            steps_v = st.session_state.get("f_steps", "").strip()
+            if not title_v or not symptom_v or not steps_v:
+                st.session_state["flash_msg"] = "⚠️ 标题、症状、解决步骤是必填项。"
+            else:
+                cid = db.add_case(
+                    title_v,
+                    st.session_state.get("f_category", "").strip(),
+                    symptom_v,
+                    st.session_state.get("f_cause", "").strip(),
+                    steps_v,
+                    st.session_state.get("f_tags", "").strip(),
+                )
+                # 同步更新向量索引，让新案例立即参与语义检索
+                try:
+                    case = db.get_case(cid)
+                    vector_search.upsert_case(case, api_key, model=embed_model)
+                except Exception:
+                    pass
+                st.session_state["flash_msg"] = f"✅ 已录入「{title_v}」。"
+                st.session_state["_do_clear"] = True   # 标记清空，同样放到下一轮开头执行
+            st.rerun()
+
+    # 提示信息（跨 rerun 显示一次就清掉）
+    if st.session_state.get("autofill_msg"):
+        st.info(st.session_state["autofill_msg"])
+        st.session_state["autofill_msg"] = ""
+    if st.session_state.get("flash_msg"):
+        msg = st.session_state["flash_msg"]
+        st.session_state["flash_msg"] = ""
+        if msg.startswith("⚠️"):
+            st.warning(msg)
+        else:
+            st.success(msg)
 
     st.divider()
     st.caption("小技巧：把『症状』写得具体一点（写了什么提示、什么现象），AI 排查时匹配会更准。")

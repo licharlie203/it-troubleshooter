@@ -1,0 +1,13 @@
+# 不打进镜像的东西
+config.py
+.env
+chroma_db/
+it_troubleshooter.db
+__pycache__/
+*.pyc
+.venv/
+venv/
+.git/
+.gitignore
+streamlit/
+*.log

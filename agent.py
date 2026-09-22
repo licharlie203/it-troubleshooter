@@ -100,7 +100,12 @@ SYSTEM_PROMPT = (
     "2. 如果一次没查到有用的，可以换个说法再查一次，最多试 3 次。\n"
     "3. 回答要结构化：先判断故障可能的分类和原因，再给出『分步排查清单』（按先易后难排序），每一步标注依据来自哪条案例。\n"
     "4. 如果库里确实没有相似案例，直接说明『知识库里暂无类似案例』，并给出通用排查思路（标注这是通用建议、非案例依据）。\n"
-    "5. 排查步骤要具体、可执行，不要只说『检查网络』这种空话，要说『用 ipconfig 看是否拿到 IP』。"
+    "5. 排查步骤要具体、可执行，不要只说『检查网络』这种空话，要说『用 ipconfig 看是否拿到 IP』。\n"
+    "6. 【多轮追问】如果用户给的信息不足以定位故障（例如没说是台式机还是笔记本、没给报错原文、"
+    "没说有线还是无线、没说单个用户还是全员），**先别急着给方案**，直接用一两句问清最关键的 1-2 个信息，"
+    "等用户补充后再检索案例给方案。追问要简短直白，一次最多问两点，不要罗列一堆问题。\n"
+    "7. 【多轮补充】用户在后续对话里补充了信息时，要结合前文一起判断，接着往下排查，"
+    "不要说『你之前没说过』这类话，也不要重复已经排查过的步骤。"
 )
 
 
@@ -215,7 +220,8 @@ def _chat(messages, api_key, model, tools=None):
     return resp.json()
 
 
-def diagnose(question, api_key, model="qwen-plus", max_steps=MAX_STEPS, embed_model="text-embedding-v3"):
+def diagnose(question, api_key, model="qwen-plus", max_steps=MAX_STEPS,
+             embed_model="text-embedding-v3", history=None):
     """
     排查主循环。返回 (answer, trace)。
 
@@ -223,11 +229,26 @@ def diagnose(question, api_key, model="qwen-plus", max_steps=MAX_STEPS, embed_mo
         while 模型想调工具 且 没超步数:
             发消息 → 模型回「直接答」就结束，回「调工具」就执行并把结果塞回去
     区别只在于：这里的工具是面向故障排查的专业工具。
+
+    【多轮对话】history 参数（这个项目新增）
+    ------------------------------------------------
+    单轮 = 每次只把当前这一句发给模型，模型不知道上一轮聊了啥。
+    多轮 = 把之前的对话也一起发过去，模型才有「记忆」。
+
+    注意 history 里【只保留 user / assistant 的纯文本】，
+    不要把上一轮的 tool_calls / tool 消息带进来——那些 tool_call_id 是本轮专有的，
+    跨轮复用会直接报错（这是很多人做多轮 Agent 时踩的第一个坑）。
+
+    history 格式：[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
     """
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": question},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # 把历史对话接在 system 之后、本轮问题之前 —— 这就是「记忆」
+    for m in (history or []):
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": question})
     trace = []
 
     for step in range(1, max_steps + 1):
