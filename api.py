@@ -29,8 +29,9 @@ Streamlit 页面（app.py）是「给人点的」，只能你本机自己用。
 import os
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import db
@@ -39,6 +40,12 @@ import suggest
 import vector_search
 
 EMBED_MODEL = "text-embedding-v3"
+
+# 访问口令：部署上线后，调用 /diagnose、/cases 等接口需要带这个口令，
+# 防止陌生人直接调接口刷你的 API Key（烧钱）。
+# 口令以代码内常量为准（部署沙箱可能注入未知的 ACCESS_TOKEN 环境变量，这里显式忽略，
+# 避免线上口令不可控）。若想临时换口令，改这个常量即可。
+ACCESS_TOKEN = "itsk-iwo270br8k3f178p"
 
 
 def get_api_key():
@@ -74,6 +81,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ==================== 访问口令校验（部署上线时防刷 Key） ====================
+# 说明：只有设置了 ACCESS_TOKEN 环境变量时才启用校验；
+#       本地开发没设这个变量 → 完全不影响原来的用法。
+#       带口令的方式：请求头加  Authorization: Bearer <口令>
+#                   或 query 参数  ?token=<口令>
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    if ACCESS_TOKEN:
+        path = request.url.path
+        # /docs、/openapi.json、/health、/redoc 保持公开，方便探活和看文档
+        if path not in ("/docs", "/openapi.json", "/health", "/redoc"):
+            # 从 query 参数 key 取口令。注意：不用 token / authorization，
+            # 因为部署网关会占用/污染这些标准字段。
+            supplied = request.query_params.get("key", "")
+            if supplied != ACCESS_TOKEN:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "需要访问口令：请在 URL 加 ?key=<口令>"},
+                )
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -236,3 +265,12 @@ def suggest_fields(body: SuggestIn):
         model=get_model(), existing_categories=db.all_categories(),
     )
     return SuggestOut(**res)
+
+
+# ==================== 启动入口（本地 / 沙箱部署通用） ====================
+# 部署平台会注入 PORT 环境变量，服务必须监听它；
+# 本地直接 `python api.py` 也能跑，默认 8000。
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

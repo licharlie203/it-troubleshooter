@@ -5,6 +5,9 @@
 > 第五个作品。相比 ai-doc-qa（查文档），这里多了三层关键能力：
 > **结构化数据 + 可持续录入 + 专业排查 Agent**。
 
+> 🌐 **已上线**：`https://it-troubleshooter-79990.app.workbuddy.host/`
+> （FastAPI 接口版，带访问口令保护；公开探活 `/health`，完整接口文档 `/docs`）
+
 ## ✨ 它能做什么
 
 - **录入故障**：把解决过的故障（症状/原因/解决步骤/标签）存进知识库，持续积累
@@ -133,6 +136,10 @@ curl -X POST http://127.0.0.1:8000/diagnose \
   -H "Content-Type: application/json" \
   -d "{\"question\": \"打印机打不出来，显示脱机\"}"
 ```
+
+> 🔒 **线上访问口令**：部署上线后，调用 `/diagnose`、`/cases` 等接口需在 URL 加 `?key=<口令>`，
+> 防止陌生人刷 API Key（烧钱）。`/health`、`/docs` 保持公开。
+> 口令在 `api.py` 顶部的 `ACCESS_TOKEN` 常量里，可自行修改。
 
 ### 「让模型吐 JSON」是怎么做的（`suggest.py`）
 
