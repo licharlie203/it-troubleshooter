@@ -31,7 +31,8 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
@@ -40,6 +41,9 @@ import suggest
 import vector_search
 
 EMBED_MODEL = "text-embedding-v3"
+
+# 静态页面目录：给部署在公网的接口套一个能点的演示页（HR 点开就有界面，不用看 JSON）
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # 访问口令：部署上线后，调用 /diagnose、/cases 等接口需要带这个口令，
 # 防止陌生人直接调接口刷你的 API Key（烧钱）。
@@ -93,9 +97,10 @@ async def auth_guard(request: Request, call_next):
     if ACCESS_TOKEN:
         path = request.url.path
         # /docs、/openapi.json、/health、/redoc 保持公开，方便探活和看文档
-        if path not in ("/docs", "/openapi.json", "/health", "/redoc"):
-            # 从 query 参数 key 取口令。注意：不用 token / authorization，
-            # 因为部署网关会占用/污染这些标准字段。
+        if path not in ("/", "/docs", "/openapi.json", "/health", "/redoc") \
+                and not path.startswith("/static"):
+            # 演示页本身（/ 和 /static/...）保持公开：页面能被打开，才有东西可看；
+            # 页面里真正调用数据时仍然要带 key。
             supplied = request.query_params.get("key", "")
             if supplied != ACCESS_TOKEN:
                 return JSONResponse(
@@ -265,6 +270,16 @@ def suggest_fields(body: SuggestIn):
         model=get_model(), existing_categories=db.all_categories(),
     )
     return SuggestOut(**res)
+
+
+# ==================== 演示页（把接口包装成人能点的界面） ====================
+@app.get("/", include_in_schema=False, summary="演示首页")
+def index():
+    """返回 static/index.html：公网打开链接就能直接试用，不必对着 JSON 猜。"""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # ==================== 启动入口（本地 / 沙箱部署通用） ====================

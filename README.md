@@ -7,6 +7,8 @@
 
 > 🌐 **已上线**：`https://it-troubleshooter-79990.app.workbuddy.host/`
 > （FastAPI 接口版，带访问口令保护；公开探活 `/health`，完整接口文档 `/docs`）
+> 🖥️ 部署版根路径 `/` 挂了一个**网页演示页**（`static/index.html`），打开链接就能直接用，
+> 不用对着 JSON 猜；页面公开、数据接口仍需 `?key=<口令>`。
 
 ## ✨ 它能做什么
 
@@ -17,6 +19,7 @@
 - **故障库管理**：浏览、搜索、按分类筛选、编辑、删除案例
 - **语义检索**：用 embedding 把「症状」向量化，「打印机打不出」也能匹配到「打印机脱机无法打印」
 - **HTTP 接口**：`api.py` 把全部能力包成 REST 接口（含自动生成的接口文档），可供 OA / 企业微信机器人等外部系统调用
+- **网页演示页**：`static/index.html`（原生 HTML + JS，无框架），挂在服务根路径 `/`，排查 / 知识库 / 录入三个页签，还能展开看 Agent 的每一步工具调用
 
 ## 🚀 快速开始
 
@@ -31,6 +34,7 @@ streamlit run app.py         # ① 网页界面（自己日常用）
 ```bash
 uvicorn api:app --reload --port 8000
 # 接口文档（能直接点着测）：http://127.0.0.1:8000/docs
+# 网页演示页（人点的）：    http://127.0.0.1:8000/
 ```
 
 用 Docker 跑接口（Key 用环境变量传，不写进镜像）：
@@ -44,7 +48,8 @@ docker run -p 8000:8000 -e DASHSCOPE_API_KEY=sk-xxx it-troubleshooter
 
 > 🔒 `config.py`、`it_troubleshooter.db`、`chroma_db/` 已被 `.gitignore` 排除，不会上传 GitHub。
 >
-> ✅ 自动化测试：`python test_ui.py`（界面交互，AppTest）、`python test_api.py`（HTTP 接口，需先起服务）。
+> ✅ 自动化测试：`python test_ui.py`（界面交互，AppTest）、`python test_api.py`（HTTP 接口，需先起服务）、
+> `python test_page.py`（演示页 + 它用到的接口，需先起服务）。
 
 ## 🧠 它是怎么工作的
 
@@ -70,6 +75,7 @@ Agent 判断这是打印类故障 → 调用 search_similar_cases
 | 录入补全      | 结构化 JSON 输出（`suggest.py`）  | 模型自动填分类/标签，省去手工填写           |
 | 界面        | Streamlit（`app.py`）         | 多轮对话排查 / 录入 / 故障库 三个页面       |
 | 接口        | FastAPI（`api.py`）           | REST 接口 + 自动文档，供外部系统调用        |
+| 演示前端      | 原生 HTML/JS（`static/index.html`） | 由 FastAPI 静态托管，同一份接口换成给人点的界面 |
 | 部署        | Docker（`Dockerfile`）        | 一条命令打包运行，Key 用环境变量注入         |
 
 ### 多轮对话排查是怎么做的（`app.py` + `agent.py`）
@@ -141,6 +147,35 @@ curl -X POST http://127.0.0.1:8000/diagnose \
 > 防止陌生人刷 API Key（烧钱）。`/health`、`/docs` 保持公开。
 > 口令在 `api.py` 顶部的 `ACCESS_TOKEN` 常量里，可自行修改。
 
+### 给接口套一个网页演示页（`static/index.html`）
+
+接口写好、部署上线后有个现实问题：**非技术同学（HR / 面试官助理）点开链接看到的是 JSON**，
+根本不知道你在做什么。所以再加一层极薄的静态页面，成本半小时，展示效果差一个档次。
+
+做法只有三行关键代码（`api.py`）：
+
+```python
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+@app.get("/", include_in_schema=False)        # 根路径返回页面
+def index():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+```
+
+三个要点（面试能讲）：
+
+1. **页面公开、数据接口仍要口令**：把 `/` 和 `/static/…` 加进鉴权白名单，
+   页面里每次请求再自己拼 `?key=…`。陌生人能「看」但不能「刷」。
+2. **前端不引任何框架**：原生 `fetch` + `innerHTML`，几十 KB、秒开、零构建。
+   大模型回答是 markdown，前端做了个 20 行的极简渲染（标题 / 列表 / 加粗 / 换行）。
+3. **多轮对话的记忆在前端**：`history` 数组只存 `user`/`assistant` 纯文本，
+   每轮把整段历史 POST 给 `/diagnose`——和服务端 `agent.py` 里那条「不能跨轮带 tool_calls」的规则是同一件事。
+
 ### 「让模型吐 JSON」是怎么做的（`suggest.py`）
 
 企业里天天要用的技巧：让大模型输出「程序能直接用」的结构化数据，而不是一段话。
@@ -181,6 +216,7 @@ curl -X POST http://127.0.0.1:8000/diagnose \
 - [x] 录入时用模型自动补全「分类/标签」（结构化 JSON 输出）
 - [x] 多轮对话式排查（追问补充症状）
 - [x] 包成 FastAPI 接口 + Docker 部署
+- [x] 给接口套一个网页演示页（`static/index.html`，原生 HTML/JS）
 - [ ] 接企业微信/钉钉机器人：群里问一句「打印机打不出」，机器人直接回排查清单
 - [ ] 案例批量导入导出（CSV/Excel），方便把历史工单一次性灌进来
 - [ ] 排查结果反馈闭环：用户标记「这条建议解决了/没解决」，反哺案例质量

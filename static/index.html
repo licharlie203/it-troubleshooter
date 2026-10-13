@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IT 运维故障知识库 · 智能排查助手</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --line:#e5e7eb; --text:#1f2937;
+    --muted:#6b7280; --brand:#2563eb; --brand-soft:#eff6ff; --ok:#059669; --warn:#b45309;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:-apple-system,"PingFang SC","Microsoft YaHei",Helvetica,Arial,sans-serif;font-size:15px;line-height:1.7;}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 16px 60px;}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;margin-bottom:4px;}
+  h1{font-size:22px;margin:0;}
+  .sub{color:var(--muted);font-size:13px;}
+  .status{margin-left:auto;font-size:13px;color:var(--muted);}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d1d5db;margin-right:6px;}
+  .dot.ok{background:var(--ok);} .dot.bad{background:#dc2626;}
+
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+       background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:14px 0 18px;}
+  .bar label{font-size:13px;color:var(--muted);}
+  input,textarea,select{font-family:inherit;font-size:14px;color:var(--text);
+       border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;outline:none;}
+  input:focus,textarea:focus{border-color:var(--brand);}
+  #token{flex:1;min-width:240px;font-family:Consolas,monospace;font-size:13px;}
+
+  .tabs{display:flex;gap:6px;margin-bottom:14px;}
+  .tab{padding:7px 16px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:14px;color:var(--muted);}
+  .tab.on{background:var(--brand);border-color:var(--brand);color:#fff;}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  textarea{width:100%;min-height:82px;resize:vertical;}
+  button{font-family:inherit;font-size:14px;border:none;border-radius:8px;cursor:pointer;
+         background:var(--brand);color:#fff;padding:9px 18px;}
+  button:hover{filter:brightness(1.05);}
+  button:disabled{background:#9ca3af;cursor:not-allowed;}
+  button.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand);}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;}
+  .hint{font-size:12px;color:var(--muted);}
+
+  #chat{margin-top:16px;}
+  .msg{margin-bottom:12px;}
+  .who{font-size:12px;color:var(--muted);margin-bottom:4px;}
+  .bubble{background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-wrap;}
+  .bubble.me{background:var(--brand-soft);border-color:#dbeafe;}
+  details{margin-top:8px;border:1px dashed var(--line);border-radius:8px;padding:8px 10px;background:#fafafa;}
+  summary{cursor:pointer;font-size:13px;color:var(--muted);}
+  .step{font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line);padding:6px 0;white-space:pre-wrap;word-break:break-all;}
+
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+  .case{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+  .case h3{margin:0 0 6px;font-size:15px;}
+  .tag{display:inline-block;font-size:12px;color:var(--brand);background:var(--brand-soft);
+       border-radius:20px;padding:1px 10px;margin-right:6px;}
+  .meta{font-size:12px;color:var(--muted);}
+  .kv{margin:6px 0;font-size:14px;}
+  .kv b{color:var(--muted);font-weight:600;margin-right:6px;}
+  ol{margin:6px 0 0 20px;padding:0;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  @media(max-width:640px){.grid2{grid-template-columns:1fr;}}
+  .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
+  .field span{font-size:13px;color:var(--muted);}
+  .toast{margin-top:10px;font-size:13px;color:var(--ok);}
+  .toast.err{color:#dc2626;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>IT 运维故障知识库 · 智能排查助手</h1>
+    <span class="sub">语义检索 + 排查 Agent</span>
+    <span class="status"><span class="dot" id="dot"></span><span id="healthTxt">正在连接…</span></span>
+  </header>
+
+  <div class="bar">
+    <label for="token">访问口令</label>
+    <input id="token" value="itsk-iwo270br8k3f178p" placeholder="演示口令">
+    <span class="hint">演示页已预填口令，直接点就能用；接口文档见 <a href="/docs" target="_blank">/docs</a></span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab on" data-tab="diag">智能排查</div>
+    <div class="tab" data-tab="cases">故障知识库</div>
+    <div class="tab" data-tab="add">录入新案例</div>
+  </div>
+
+  <!-- ============ 智能排查 ============ -->
+  <section id="tab-diag">
+    <div class="card">
+      <textarea id="q" placeholder="描述故障现象，越具体越好。例：打印机显示脱机，重启打印服务也没用，同事电脑都打不了"></textarea>
+      <div class="row">
+        <button id="send">开始排查</button>
+        <button class="ghost" id="clear">清空对话</button>
+        <span class="hint">信息不够时 Agent 会先追问你，直接补充就行（多轮对话）</span>
+      </div>
+      <div id="chat"></div>
+    </div>
+  </section>
+
+  <!-- ============ 知识库 ============ -->
+  <section id="tab-cases" style="display:none">
+    <div class="card">
+      <div class="filters">
+        <select id="cat"><option value="">全部分类</option></select>
+        <input id="kw" placeholder="关键词：打印机 / 蓝屏 / VPN…" style="flex:1;min-width:180px">
+        <button id="search">查询</button>
+      </div>
+      <div id="caseList"><span class="hint">切换到本页会自动加载。</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 录入 ============ -->
+  <section id="tab-add" style="display:none">
+    <div class="card">
+      <div class="field"><span>故障标题 *</span><input id="f_title" placeholder="如：共享打印机脱机无法打印"></div>
+      <div class="field"><span>症状（用户看到的现象）</span><textarea id="f_symptom" style="min-height:60px"></textarea></div>
+      <div class="row" style="margin-top:0">
+        <button class="ghost" id="suggest">AI 补全分类和标签</button>
+        <span class="hint">填好标题/症状后点，让模型推荐分类与标签</span>
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <div class="field"><span>分类</span><input id="f_category" placeholder="打印/网络/系统/账号"></div>
+        <div class="field"><span>标签（逗号分隔）</span><input id="f_tags" placeholder="打印机,共享,脱机"></div>
+      </div>
+      <div class="field"><span>根本原因</span><input id="f_cause" placeholder="如：Print Spooler 服务卡死"></div>
+      <div class="field"><span>解决步骤（每行一条）</span><textarea id="f_steps" style="min-height:90px" placeholder="1. 重启 Print Spooler 服务&#10;2. 重新添加共享打印机"></textarea></div>
+      <div class="row">
+        <button id="submit">录入知识库</button>
+        <span class="hint">入库同时会写入向量索引，之后就能被语义检索到</span>
+      </div>
+      <div class="toast" id="addToast"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+// 极简 markdown：标题、列表、加粗、换行（模型回答里基本就这几种）
+function md(s){
+  return esc(s)
+    .replace(/^\s{0,3}#{1,6}\s*/gm,"")      // ### 小标题 → 去掉井号
+    .replace(/^\s*[-*]\s+/gm,"• ")          // - 列表 → 圆点
+    .replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")  // **加粗**
+    .replace(/`(.+?)`/g,"<code>$1</code>")  // `代码`
+    .replace(/\n/g,"<br>");
+}
+const withKey = p => p + (p.indexOf("?")>=0 ? "&" : "?") + "key=" + encodeURIComponent($("token").value.trim());
+let history = [];   // 多轮对话的「记忆」：只放 user/assistant 纯文本
+
+/* ---------- 探活 ---------- */
+async function ping(){
+  try{
+    const r = await fetch("/health");
+    const d = await r.json();
+    $("dot").className = "dot ok";
+    $("healthTxt").textContent = `在线 · ${d.cases} 条案例 · 向量索引 ${d.vector_count} 条 · ${d.model}`;
+  }catch(e){
+    $("dot").className = "dot bad";
+    $("healthTxt").textContent = "服务未连接";
+  }
+}
+
+/* ---------- 标签页 ---------- */
+document.querySelectorAll(".tab").forEach(t=>{
+  t.onclick = ()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+    t.classList.add("on");
+    ["diag","cases","add"].forEach(n=>{ $("tab-"+n).style.display = (n===t.dataset.tab)?"":"none"; });
+    if(t.dataset.tab==="cases") loadCases();
+  };
+});
+
+/* ---------- 排查（多轮） ---------- */
+function renderTrace(trace){
+  if(!trace || !trace.length) return "";
+  const items = trace.filter(t=>t.type!=="final").map(t=>{
+    if(t.type==="call"){
+      return `<div class="step">▶ 第${t.step}步 调用工具 <b>${esc(t.name)}</b>　参数：${esc(JSON.stringify(t.args))}</div>`;
+    }
+    const r = typeof t.result==="string" ? t.result : JSON.stringify(t.result);
+    return `<div class="step">　 └ 返回：${esc(r.length>300? r.slice(0,300)+"…" : r)}</div>`;
+  }).join("");
+  return `<details><summary>查看 Agent 思考过程（${trace.filter(t=>t.type==="call").length} 次工具调用）</summary>${items}</details>`;
+}
+function addMsg(who, html, trace){
+  const box = document.createElement("div");
+  box.className = "msg";
+  box.innerHTML = `<div class="who">${who}</div><div class="bubble ${who==="我"?"me":""}">${html}</div>`
+                + (trace? renderTrace(trace) : "");
+  $("chat").appendChild(box);
+  box.scrollIntoView({behavior:"smooth", block:"end"});
+}
+async function diagnose(){
+  const q = $("q").value.trim();
+  if(!q) return;
+  $("send").disabled = true; $("send").textContent = "排查中…";
+  addMsg("我", md(q));
+  $("q").value = "";
+  try{
+    const r = await fetch(withKey("/diagnose"),{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({question:q, history:history})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || JSON.stringify(d));
+    addMsg("排查助手", md(d.answer), d.trace);
+    history.push({role:"user",content:q},{role:"assistant",content:d.answer});
+  }catch(e){
+    addMsg("排查助手", `<span style="color:#dc2626">出错：${esc(e.message)}</span>`);
+  }finally{
+    $("send").disabled = false; $("send").textContent = "开始排查";
+  }
+}
+$("send").onclick = diagnose;
+$("q").addEventListener("keydown", e=>{ if(e.key==="Enter" && (e.ctrlKey||e.metaKey)) diagnose(); });
+$("clear").onclick = ()=>{ history=[]; $("chat").innerHTML=""; };
+
+/* ---------- 知识库列表 ---------- */
+async function loadCases(){
+  const cat = $("cat").value, kw = $("kw").value.trim();
+  let p = "/cases";
+  const ps = [];
+  if(cat) ps.push("category="+encodeURIComponent(cat));
+  if(kw)  ps.push("keyword="+encodeURIComponent(kw));
+  if(ps.length) p += "?" + ps.join("&");
+  try{
+    const r = await fetch(withKey(p));
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail||"查询失败");
+    $("caseList").innerHTML = d.items.length ? d.items.map(c=>`
+      <div class="case">
+        <h3>#${c.id} ${esc(c.title)}</h3>
+        <div class="meta">${esc(c.category||"未分类")} · ${esc(c.created_at||"")}</div>
+        <div class="kv"><b>症状</b>${esc(c.symptom||"—")}</div>
+        <div class="kv"><b>原因</b>${esc(c.cause||"—")}</div>
+        <div class="kv"><b>步骤</b></div>
+        <ol>${(c.steps_list||[]).map(s=>`<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ol>
+        <div style="margin-top:6px">${(c.tags||"").split(",").filter(Boolean).map(t=>`<span class="tag">${esc(t.trim())}</span>`).join("")}</div>
+      </div>`).join("") : `<span class="hint">没有匹配的案例。</span>`;
+  }catch(e){
+    $("caseList").innerHTML = `<span style="color:#dc2626">出错：${esc(e.message)}</span>`;
+  }
+}
+$("search").onclick = loadCases;
+$("kw").addEventListener("keydown", e=>{ if(e.key==="Enter") loadCases(); });
+async function loadCats(){
+  try{
+    const d = await (await fetch("/health")).json();
+    (d.categories||[]).forEach(c=>{
+      const o = document.createElement("option"); o.value=c; o.textContent=c; $("cat").appendChild(o);
+    });
+  }catch(e){}
+}
+
+/* ---------- 录入 + AI 补全 ---------- */
+$("suggest").onclick = async ()=>{
+  const btn=$("suggest"); btn.disabled=true; btn.textContent="补全中…";
+  try{
+    const r = await fetch(withKey("/suggest"),{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({title:$("f_title").value, symptom:$("f_symptom").value, cause:$("f_cause").value})
+    });
+    const d = await r.json();
+    if(d.ok){ $("f_category").value=d.category||""; $("f_tags").value=d.tags||""; }
+    else $("addToast").className="toast err", $("addToast").textContent="补全失败："+(d.error||"");
+  }catch(e){ $("addToast").className="toast err"; $("addToast").textContent="补全出错："+e.message; }
+  finally{ btn.disabled=false; btn.textContent="AI 补全分类和标签"; }
+};
+$("submit").onclick = async ()=>{
+  const t = $("f_title").value.trim();
+  const toast=$("addToast");
+  if(!t){ toast.className="toast err"; toast.textContent="标题不能为空"; return; }
+  try{
+    const r = await fetch(withKey("/cases"),{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({title:t, category:$("f_category").value, symptom:$("f_symptom").value,
+        cause:$("f_cause").value, steps:$("f_steps").value, tags:$("f_tags").value})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail||"录入失败");
+    toast.className="toast";
+    toast.textContent = `已录入「${d.message}」，向量索引${d.index_synced?"已同步":"未同步（检索时会降级为关键词匹配）"}`;
+    ["f_title","f_category","f_symptom","f_cause","f_steps","f_tags"].forEach(i=>$(i).value="");
+    ping();
+  }catch(e){ toast.className="toast err"; toast.textContent="录入出错："+e.message; }
+};
+
+ping(); loadCats();
+</script>
+</body>
+</html>
