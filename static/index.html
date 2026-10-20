@@ -66,6 +66,19 @@
   .field span{font-size:13px;color:var(--muted);}
   .toast{margin-top:10px;font-size:13px;color:var(--ok);}
   .toast.err{color:#dc2626;}
+
+  /* ===== 演示引导区（Hero） ===== */
+  .hero{background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;
+       border-radius:14px;padding:22px 22px 18px;margin-bottom:16px;}
+  .hero h2{margin:0 0 8px;font-size:19px;}
+  .hero p{margin:0 0 6px;font-size:14px;color:#e0eaff;line-height:1.65;}
+  .hero .point{display:inline-block;background:rgba(255,255,255,.15);border-radius:6px;
+       padding:2px 9px;font-size:12.5px;margin:4px 6px 0 0;}
+  .hero .try-row{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .hero .try-btn{background:#fff;color:#1d4ed8;font-weight:600;padding:8px 16px;border-radius:8px;
+       cursor:pointer;font-size:14px;border:none;}
+  .hero .try-btn:hover{filter:brightness(.96);}
+  .hero .try-hint{font-size:12px;color:#c7d8ff;}
 </style>
 </head>
 <body>
@@ -75,6 +88,26 @@
     <span class="sub">语义检索 + 排查 Agent</span>
     <span class="status"><span class="dot" id="dot"></span><span id="healthTxt">正在连接…</span></span>
   </header>
+
+  <!-- ===== 演示引导区：让访客 30 秒看懂这是啥、牛在哪 ===== -->
+  <div class="hero">
+    <h2>解决企业 IT 知识库「搜不到」的痛点</h2>
+    <p>传统工单知识库靠关键词精确匹配——故障描述差一个字、换一种说法，就搜不出结果。</p>
+    <p>这个系统用 <b>语义检索</b> 理解「用户到底在说什么」，再叠加 <b>排查 Agent</b> 一步步问清情况、给出可执行的排查步骤。</p>
+    <div>
+      <span class="point">🔍 语义检索（RAG）</span>
+      <span class="point">🤖 多轮排查 Agent</span>
+      <span class="point">⚙️ Function Calling</span>
+      <span class="point">🐍 FastAPI + Docker</span>
+      <span class="point">📦 已上线</span>
+    </div>
+    <div class="try-row">
+      <button class="try-btn" data-q="打印机显示脱机，重启了打印服务还是不行，同事的电脑也打不了">一键试：打印机脱机</button>
+      <button class="try-btn" data-q="电脑突然蓝屏，重启后还是蓝屏，进不了系统">一键试：系统蓝屏</button>
+      <button class="try-btn" data-q="连不上公司 VPN，一直提示用户名密码错误，但是密码我确认没输错">一键试：VPN 连不上</button>
+      <span class="try-hint">↓ 点一个试试，30 秒看懂效果</span>
+    </div>
+  </div>
 
   <div class="bar">
     <label for="token">访问口令</label>
@@ -219,6 +252,19 @@ async function diagnose(){
 $("send").onclick = diagnose;
 $("q").addEventListener("keydown", e=>{ if(e.key==="Enter" && (e.ctrlKey||e.metaKey)) diagnose(); });
 $("clear").onclick = ()=>{ history=[]; $("chat").innerHTML=""; };
+
+/* ---------- 一键演示案例：填入问题并直接排查 ---------- */
+document.querySelectorAll(".try-btn").forEach(b=>{
+  b.onclick = ()=>{
+    $("q").value = b.dataset.q;
+    // 切到「智能排查」页签，让访客能看到结果
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+    document.querySelector('.tab[data-tab="diag"]').classList.add("on");
+    ["diag","cases","add"].forEach(n=>{ $("tab-"+n).style.display = (n==="diag")?"":"none"; });
+    diagnose();
+    b.scrollIntoView({behavior:"smooth", block:"start"});
+  };
+});
 
 /* ---------- 知识库列表 ---------- */
 async function loadCases(){
